@@ -44,28 +44,9 @@ def init_db():
         )
     ''')
 
-    # Seed with NIFTY 50 (Subset for initial testing)
-    nifty_50_symbols = [
-        ('RELIANCE', 'Reliance Industries Ltd.'),
-        ('TCS', 'Tata Consultancy Services Ltd.'),
-        ('HDFCBANK', 'HDFC Bank Ltd.'),
-        ('INFY', 'Infosys Ltd.'),
-        ('ICICIBANK', 'ICICI Bank Ltd.'),
-        ('HUL', 'Hindustan Unilever Ltd.'),
-        ('ITC', 'ITC Ltd.'),
-        ('SBIN', 'State Bank of India'),
-        ('BHARTIARTL', 'Bharti Airtel Ltd.'),
-        ('BAJFINANCE', 'Bajaj Finance Ltd.')
-    ]
-
-    cursor.executemany('''
-        INSERT OR IGNORE INTO stocks (symbol, company_name)
-        VALUES (?, ?)
-    ''', nifty_50_symbols)
-
     conn.commit()
     conn.close()
-    logger.info("Database initialized successfully.")
+    logger.info("Database schemas initialized successfully.")
 
 if __name__ == '__main__':
     init_db()

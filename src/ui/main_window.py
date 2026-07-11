@@ -16,28 +16,34 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("NSE Smart Money Scanner - V1 Foundation")
-        self.resize(800, 600)
+        self.setWindowTitle("NSE Smart Money Scanner")
+
+        # Apply Modern Dark Theme
+        self.apply_dark_theme()
 
         # Main Widget and Layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.layout = QVBoxLayout(self.central_widget)
+        self.main_layout = QHBoxLayout(self.central_widget)
+
+        # Left Panel (Settings & Controls)
+        self.left_panel = QWidget()
+        self.left_panel.setFixedWidth(350)
+        self.left_layout = QVBoxLayout(self.left_panel)
 
         # Header
-        self.header_label = QLabel("Scanner Dashboard")
-        self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.header_label.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
-        self.layout.addWidget(self.header_label)
+        self.header_label = QLabel("Scanner Configuration")
+        self.header_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #ffffff; margin-bottom: 10px;")
+        self.left_layout.addWidget(self.header_label)
 
         # Broker Settings Group
-        self.broker_group = QGroupBox("Broker Login & Settings")
+        self.broker_group = QGroupBox("Broker Connection")
         self.broker_layout = QFormLayout()
 
         self.broker_combo = QComboBox()
         self.broker_combo.addItems(["Zerodha Kite", "Upstox"])
         self.broker_combo.currentTextChanged.connect(self.on_broker_changed)
-        self.broker_layout.addRow("Select Broker:", self.broker_combo)
+        self.broker_layout.addRow("Provider:", self.broker_combo)
 
         self.api_key_input = QLineEdit()
         self.broker_layout.addRow("API Key:", self.api_key_input)
@@ -56,33 +62,91 @@ class MainWindow(QMainWindow):
         self.broker_layout.addRow("", self.save_button)
 
         self.broker_group.setLayout(self.broker_layout)
-        self.layout.addWidget(self.broker_group)
+        self.left_layout.addWidget(self.broker_group)
 
         # Load initial credentials
         self.on_broker_changed(self.broker_combo.currentText())
 
-        # Control Panel
-        self.control_layout = QHBoxLayout()
-        self.download_button = QPushButton("Run EOD Data Download")
-        self.download_button.setMinimumHeight(40)
-        self.download_button.setStyleSheet("font-size: 14px;")
+        self.left_layout.addStretch()
 
-        self.control_layout.addStretch()
-        self.control_layout.addWidget(self.download_button)
-        self.control_layout.addStretch()
-        self.layout.addLayout(self.control_layout)
-
+        # Download Button
+        self.download_button = QPushButton("SYNC UNIVERSE && DOWNLOAD DATA")
+        self.download_button.setMinimumHeight(50)
+        self.download_button.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+                border-radius: 4px;
+            }
+            QPushButton:hover { background-color: #2ecc71; }
+            QPushButton:disabled { background-color: #7f8c8d; color: #bdc3c7; }
+        """)
         self.download_button.clicked.connect(self.start_download)
+        self.left_layout.addWidget(self.download_button)
 
-        # Status/Log Area
+        self.main_layout.addWidget(self.left_panel)
+
+        # Right Panel (Status/Log Area)
+        self.right_panel = QWidget()
+        self.right_layout = QVBoxLayout(self.right_panel)
+
+        self.log_label = QLabel("Execution Logs")
+        self.log_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #bdc3c7;")
+        self.right_layout.addWidget(self.log_label)
+
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setStyleSheet("background-color: #f0f0f0; font-family: monospace;")
-        self.layout.addWidget(self.log_area)
+        self.log_area.setStyleSheet("""
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #ecf0f1;
+                font-family: Consolas, monospace;
+                font-size: 12px;
+                border: 1px solid #34495e;
+                border-radius: 4px;
+                padding: 10px;
+            }
+        """)
+        self.right_layout.addWidget(self.log_area)
+        self.main_layout.addWidget(self.right_panel)
 
         self.worker = None
 
-        self.log_message("Application Initialized. Select broker and save credentials to begin.")
+        self.log_message("Application Initialized.")
+        self.log_message("Select your broker on the left and click Sync Universe to begin.")
+
+    def apply_dark_theme(self):
+        """Applies a global dark theme to the application."""
+        self.setStyleSheet("""
+            QMainWindow { background-color: #2c3e50; }
+            QWidget { color: #ecf0f1; font-family: 'Segoe UI', Arial, sans-serif; }
+            QGroupBox {
+                border: 1px solid #34495e;
+                border-radius: 6px;
+                margin-top: 15px;
+                font-weight: bold;
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }
+            QLineEdit, QComboBox {
+                background-color: #34495e;
+                border: 1px solid #2c3e50;
+                border-radius: 3px;
+                padding: 5px;
+                color: #ecf0f1;
+            }
+            QLineEdit:focus, QComboBox:focus { border: 1px solid #3498db; }
+            QPushButton {
+                background-color: #2980b9;
+                color: white;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #3498db; }
+            QPushButton:pressed { background-color: #2471a3; }
+        """)
 
     def on_broker_changed(self, broker_name):
         if broker_name == "Zerodha Kite":

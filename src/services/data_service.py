@@ -1,5 +1,9 @@
 import logging
 import datetime
+import urllib.request
+import gzip
+import csv
+import io
 from PySide6.QtCore import QThread, Signal
 from src.db.database import get_connection
 from src.api.kite_client import KiteAPIClient
@@ -24,8 +28,66 @@ class DataDownloadWorker(QThread):
             self.client = KiteAPIClient()
         self.is_running = True
 
+    def sync_universe_kite(self, cursor):
+        """Syncs all NSE Equity symbols using Kite API."""
+        self.log_signal.emit("Fetching full NSE Equity instrument list from Kite...")
+        all_instruments = self.client.kite.instruments("NSE")
+
+        instrument_map = {}
+        db_insert = []
+
+        for instr in all_instruments:
+            # We only want regular equities (EQ) for scanning
+            if instr['segment'] == 'NSE' and instr['instrument_type'] == 'EQ':
+                symbol = instr['tradingsymbol']
+                name = instr.get('name', '')
+                instrument_map[symbol] = instr['instrument_token']
+                db_insert.append((symbol, name))
+
+        self.log_signal.emit(f"Found {len(db_insert)} NSE Equities. Syncing to database...")
+        cursor.executemany('INSERT OR IGNORE INTO stocks (symbol, company_name) VALUES (?, ?)', db_insert)
+        return instrument_map
+
+    def sync_universe_upstox(self, cursor):
+        """Syncs all NSE Equity symbols using Upstox Master Contract CSV."""
+        self.log_signal.emit("Downloading Upstox NSE Master Contract CSV...")
+        url = 'https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz'
+
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                with gzip.GzipFile(fileobj=response) as uncompressed:
+                    file_content = uncompressed.read().decode('utf-8')
+
+            self.log_signal.emit("Parsing Upstox CSV...")
+            reader = csv.DictReader(io.StringIO(file_content))
+
+            instrument_map = {}
+            db_insert = []
+
+            for row in reader:
+                # Filter for Equities. Upstox CSV format varies, but usually 'instrument_type' is EQ or similar
+                # Upstox keys are in 'instrument_key', symbol is in 'tradingsymbol', name in 'name'
+                # Ensure it's not a futures/options contract
+                symbol = row.get('tradingsymbol')
+                instr_key = row.get('instrument_key')
+                name = row.get('name', '')
+                instr_type = row.get('instrument_type', '')
+
+                if symbol and instr_key and instr_type == 'EQUITY':
+                    instrument_map[symbol] = instr_key
+                    db_insert.append((symbol, name))
+
+            self.log_signal.emit(f"Found {len(db_insert)} NSE Equities. Syncing to database...")
+            cursor.executemany('INSERT OR IGNORE INTO stocks (symbol, company_name) VALUES (?, ?)', db_insert)
+            return instrument_map
+
+        except Exception as e:
+            self.log_signal.emit(f"ERROR parsing Upstox CSV: {str(e)}")
+            return {}
+
     def run(self):
-        self.log_signal.emit(f"Starting EOD Data Download Process using {self.broker_type}...")
+        self.log_signal.emit(f"Starting Process using {self.broker_type}...")
 
         # Initialize API
         self.log_signal.emit(f"Authenticating with {self.broker_type}...")
@@ -36,10 +98,30 @@ class DataDownloadWorker(QThread):
 
         self.log_signal.emit("Authentication successful.")
 
-        # Connect to Database and get stocks
         conn = get_connection()
         cursor = conn.cursor()
 
+        # Step 1: Sync Universe & Build Instrument Map dynamically
+        instrument_map = {}
+        if self.broker_type == "Zerodha Kite":
+            try:
+                instrument_map = self.sync_universe_kite(cursor)
+                conn.commit()
+            except Exception as e:
+                self.log_signal.emit(f"ERROR: Failed to sync Kite universe. {str(e)}")
+                conn.close()
+                self.finished_signal.emit()
+                return
+        elif self.broker_type == "Upstox":
+            instrument_map = self.sync_universe_upstox(cursor)
+            if not instrument_map:
+                self.log_signal.emit("ERROR: Failed to build Upstox instrument map.")
+                conn.close()
+                self.finished_signal.emit()
+                return
+            conn.commit()
+
+        # Step 2: Get the list of all synced stocks to download EOD data
         cursor.execute("SELECT id, symbol FROM stocks")
         stocks = cursor.fetchall()
 
@@ -53,37 +135,7 @@ class DataDownloadWorker(QThread):
         to_date = datetime.datetime.now().strftime("%Y-%m-%d")
         from_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
 
-        self.log_signal.emit(f"Fetching data from {from_date} to {to_date}")
-
-        # We need an instrument map for the broker
-        instrument_map = {}
-        if self.broker_type == "Zerodha Kite":
-            try:
-                self.log_signal.emit("Fetching instrument list from Kite...")
-                all_instruments = self.client.kite.instruments("NSE")
-                instrument_map = {instr['tradingsymbol']: instr['instrument_token'] for instr in all_instruments}
-            except Exception as e:
-                self.log_signal.emit(f"ERROR: Failed to fetch Kite instrument list. {str(e)}")
-                conn.close()
-                self.finished_signal.emit()
-                return
-        elif self.broker_type == "Upstox":
-            # For Upstox V2, instrument keys look like NSE_EQ|INE002A01018 (or using symbol mapping).
-            # Upstox provides a master contract CSV. For this foundation, we'll use a hardcoded map
-            # for the 10 seeded NIFTY 50 stocks to demonstrate functionality.
-            self.log_signal.emit("Using local Upstox instrument mapping...")
-            instrument_map = {
-                'RELIANCE': 'NSE_EQ|INE002A01018',
-                'TCS': 'NSE_EQ|INE467B01029',
-                'HDFCBANK': 'NSE_EQ|INE040A01034',
-                'INFY': 'NSE_EQ|INE009A01021',
-                'ICICIBANK': 'NSE_EQ|INE090A01021',
-                'HUL': 'NSE_EQ|INE030A01027', # Actually HINDUNILVR
-                'ITC': 'NSE_EQ|INE154A01025',
-                'SBIN': 'NSE_EQ|INE062A01020',
-                'BHARTIARTL': 'NSE_EQ|INE397D01024',
-                'BAJFINANCE': 'NSE_EQ|INE296A01024'
-            }
+        self.log_signal.emit(f"Fetching historical EOD data from {from_date} to {to_date}")
 
         for stock in stocks:
             if not self.is_running:
