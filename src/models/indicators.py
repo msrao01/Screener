@@ -16,7 +16,7 @@ class IndicatorEngine:
     def get_stock_data(self, stock_id, limit=250):
         """Fetches historical price data for a specific stock into a Pandas DataFrame."""
         query = '''
-            SELECT date, open, high, low, close, volume
+            SELECT date, open, high, low, close, volume, delivery_percent, delivery_volume
             FROM daily_prices
             WHERE stock_id = ?
             ORDER BY date ASC

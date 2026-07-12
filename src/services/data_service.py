@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal
 from src.db.database import get_connection
 from src.api.kite_client import KiteAPIClient
 from src.api.upstox_client import UpstoxAPIClient
+from src.api.nse_bhavcopy import NSEBhavcopyClient
 
 logger = logging.getLogger(__name__)
 
@@ -216,11 +217,57 @@ class DataDownloadWorker(QThread):
                 except Exception as e:
                      self.log_signal.emit(f"Database error for {symbol}: {str(e)}")
 
-        conn.close()
-        self.log_signal.emit(f"--- Download Complete ---")
+        self.log_signal.emit(f"--- OHLCV Download Complete ---")
         self.log_signal.emit(f"Total valid stocks processed: {processed_count}")
         self.log_signal.emit(f"Total non-EQ instruments skipped: {skipped_count}")
         self.log_signal.emit(f"Total daily records saved: {total_records_inserted}")
+
+        # Step 3: Fetch Delivery Data from NSE Bhavcopy to enrich the OHLCV data
+        self.log_signal.emit("Starting NSE Delivery Data Sync...")
+        bhavcopy_client = NSEBhavcopyClient()
+
+        # We only need to fetch bhavcopies for dates that actually have trading data
+        cursor.execute("SELECT DISTINCT date FROM daily_prices WHERE date >= ? ORDER BY date DESC", (from_date,))
+        active_dates = [row['date'] for row in cursor.fetchall()]
+
+        for date_str in active_dates:
+            if not self.is_running:
+                break
+
+            self.log_signal.emit(f"Fetching NSE Delivery Data for {date_str}...")
+            delivery_data = bhavcopy_client.fetch_delivery_data(date_str)
+
+            if delivery_data:
+                # Update the database
+                update_records = []
+                for symbol, data in delivery_data.items():
+                    # We only update stocks that we actually track in our universe
+                    stock_id_query = "SELECT id FROM stocks WHERE symbol = ?"
+                    cursor.execute(stock_id_query, (symbol,))
+                    res = cursor.fetchone()
+                    if res:
+                        update_records.append((
+                            data['delivery_volume'],
+                            data['delivery_percent'],
+                            res['id'],
+                            date_str
+                        ))
+
+                try:
+                    cursor.executemany('''
+                        UPDATE daily_prices
+                        SET delivery_volume = ?, delivery_percent = ?
+                        WHERE stock_id = ? AND date = ?
+                    ''', update_records)
+                    conn.commit()
+                    self.log_signal.emit(f"Updated delivery data for {len(update_records)} stocks on {date_str}.")
+                except Exception as e:
+                    self.log_signal.emit(f"Database error updating delivery data: {str(e)}")
+            else:
+                self.log_signal.emit(f"No delivery data found/available for {date_str}.")
+
+        conn.close()
+        self.log_signal.emit("--- Full Data Sync Complete ---")
         self.finished_signal.emit()
 
     def stop(self):

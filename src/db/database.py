@@ -39,10 +39,23 @@ def init_db():
             low REAL,
             close REAL,
             volume INTEGER,
+            delivery_volume INTEGER,
+            delivery_percent REAL,
             FOREIGN KEY (stock_id) REFERENCES stocks(id),
             UNIQUE(stock_id, date)
         )
     ''')
+
+    # Safe migration for existing databases that don't have delivery columns
+    try:
+        cursor.execute('ALTER TABLE daily_prices ADD COLUMN delivery_volume INTEGER')
+    except sqlite3.OperationalError:
+        pass # Column already exists
+
+    try:
+        cursor.execute('ALTER TABLE daily_prices ADD COLUMN delivery_percent REAL')
+    except sqlite3.OperationalError:
+        pass # Column already exists
 
     conn.commit()
     conn.close()

@@ -3,15 +3,30 @@ import logging
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QLabel, QTextEdit, QHBoxLayout,
-    QComboBox, QFormLayout, QLineEdit, QGroupBox
+    QComboBox, QFormLayout, QLineEdit, QGroupBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView
 )
 import os
 from dotenv import set_key
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from src.services.data_service import DataDownloadWorker
+from src.models.scanner import ScannerEngine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class ScannerWorker(QThread):
+    finished_signal = Signal(list)
+    log_signal = Signal(str)
+
+    def run(self):
+        self.log_signal.emit("Initializing Scanner Engine...")
+        engine = ScannerEngine()
+        self.log_signal.emit("Running full market scan. This may take a moment...")
+        results = engine.run_full_scan()
+        self.log_signal.emit(f"Scan complete. Evaluated {len(results)} qualified stocks.")
+        self.finished_signal.emit(results)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -70,52 +85,69 @@ class MainWindow(QMainWindow):
         self.left_layout.addStretch()
 
         # Download Button
-        self.download_button = QPushButton("SYNC UNIVERSE && DOWNLOAD DATA")
-        self.download_button.setMinimumHeight(50)
+        self.download_button = QPushButton("1. SYNC UNIVERSE & DOWNLOAD DATA")
+        self.download_button.setMinimumHeight(40)
         self.download_button.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60;
-                color: white;
-                font-weight: bold;
-                font-size: 14px;
-                border-radius: 4px;
+                background-color: #27ae60; color: white; font-weight: bold; border-radius: 4px;
             }
             QPushButton:hover { background-color: #2ecc71; }
-            QPushButton:disabled { background-color: #7f8c8d; color: #bdc3c7; }
+            QPushButton:disabled { background-color: #7f8c8d; }
         """)
         self.download_button.clicked.connect(self.start_download)
         self.left_layout.addWidget(self.download_button)
 
+        # Scan Button
+        self.scan_button = QPushButton("2. RUN SMART MONEY SCANNER")
+        self.scan_button.setMinimumHeight(40)
+        self.scan_button.setStyleSheet("""
+            QPushButton {
+                background-color: #8e44ad; color: white; font-weight: bold; border-radius: 4px; margin-top: 10px;
+            }
+            QPushButton:hover { background-color: #9b59b6; }
+            QPushButton:disabled { background-color: #7f8c8d; }
+        """)
+        self.scan_button.clicked.connect(self.start_scan)
+        self.left_layout.addWidget(self.scan_button)
+
         self.main_layout.addWidget(self.left_panel)
 
-        # Right Panel (Status/Log Area)
-        self.right_panel = QWidget()
-        self.right_layout = QVBoxLayout(self.right_panel)
+        # Right Panel (Tabs)
+        self.tabs = QTabWidget()
 
-        self.log_label = QLabel("Execution Logs")
-        self.log_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #bdc3c7;")
-        self.right_layout.addWidget(self.log_label)
-
+        # Log Tab
+        self.log_tab = QWidget()
+        self.log_layout = QVBoxLayout(self.log_tab)
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #ecf0f1;
-                font-family: Consolas, monospace;
-                font-size: 12px;
-                border: 1px solid #34495e;
-                border-radius: 4px;
-                padding: 10px;
-            }
-        """)
-        self.right_layout.addWidget(self.log_area)
-        self.main_layout.addWidget(self.right_panel)
+        self.log_area.setStyleSheet("background-color: #1e1e1e; color: #ecf0f1; font-family: Consolas;")
+        self.log_layout.addWidget(self.log_area)
+        self.tabs.addTab(self.log_tab, "Execution Logs")
 
-        self.worker = None
+        # Results Tab
+        self.results_tab = QWidget()
+        self.results_layout = QVBoxLayout(self.results_tab)
+        self.results_table = QTableWidget()
+        self.results_table.setColumnCount(7)
+        self.results_table.setHorizontalHeaderLabels([
+            "Symbol", "Close", "Matched Scanner", "Score", "Grade", "RVOL", "Delivery %"
+        ])
+        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.results_table.setStyleSheet("""
+            QTableWidget { background-color: #1e1e1e; color: #ecf0f1; gridline-color: #34495e; }
+            QHeaderView::section { background-color: #2c3e50; color: white; font-weight: bold; border: 1px solid #34495e; }
+        """)
+        self.results_layout.addWidget(self.results_table)
+        self.tabs.addTab(self.results_tab, "Scanner Results")
+
+        self.main_layout.addWidget(self.tabs)
+
+        self.download_worker = None
+        self.scan_worker = None
 
         self.log_message("Application Initialized.")
-        self.log_message("Select your broker on the left and click Sync Universe to begin.")
+        self.log_message("1. Sync Universe to update database.")
+        self.log_message("2. Run Scanner to analyze the market.")
 
     def apply_dark_theme(self):
         """Applies a global dark theme to the application."""
@@ -191,22 +223,64 @@ class MainWindow(QMainWindow):
         logger.info(message)
 
     def start_download(self):
-        if self.worker and self.worker.isRunning():
+        if self.download_worker and self.download_worker.isRunning():
             self.log_message("A download process is already running.")
             return
 
+        self.tabs.setCurrentIndex(0) # Switch to logs tab
         self.download_button.setEnabled(False)
+        self.scan_button.setEnabled(False)
         self.log_area.clear()
 
         broker_type = self.broker_combo.currentText()
-        self.worker = DataDownloadWorker(broker_type=broker_type)
-        self.worker.log_signal.connect(self.log_message)
-        self.worker.finished_signal.connect(self.on_download_finished)
-        self.worker.start()
+        self.download_worker = DataDownloadWorker(broker_type=broker_type)
+        self.download_worker.log_signal.connect(self.log_message)
+        self.download_worker.finished_signal.connect(self.on_download_finished)
+        self.download_worker.start()
 
     def on_download_finished(self):
         self.download_button.setEnabled(True)
+        self.scan_button.setEnabled(True)
 
+    def start_scan(self):
+        if self.scan_worker and self.scan_worker.isRunning():
+            self.log_message("A scan is already running.")
+            return
+
+        self.tabs.setCurrentIndex(0) # Show logs during scan prep
+        self.scan_button.setEnabled(False)
+        self.download_button.setEnabled(False)
+
+        self.scan_worker = ScannerWorker()
+        self.scan_worker.log_signal.connect(self.log_message)
+        self.scan_worker.finished_signal.connect(self.on_scan_finished)
+        self.scan_worker.start()
+
+    def on_scan_finished(self, results):
+        self.scan_button.setEnabled(True)
+        self.download_button.setEnabled(True)
+
+        # Populate table
+        self.results_table.setRowCount(0) # Clear existing
+        for i, row in enumerate(results):
+            self.results_table.insertRow(i)
+            self.results_table.setItem(i, 0, QTableWidgetItem(str(row['symbol'])))
+            self.results_table.setItem(i, 1, QTableWidgetItem(str(row['close_price'])))
+            self.results_table.setItem(i, 2, QTableWidgetItem(str(row['scanners'])))
+
+            score_item = QTableWidgetItem(str(row['score']))
+            if row['score'] >= 75:
+                score_item.setForeground(Qt.GlobalColor.green)
+            elif row['score'] < 60:
+                score_item.setForeground(Qt.GlobalColor.red)
+            self.results_table.setItem(i, 3, score_item)
+
+            self.results_table.setItem(i, 4, QTableWidgetItem(str(row['grade'])))
+            self.results_table.setItem(i, 5, QTableWidgetItem(f"{row['rvol']}x"))
+            self.results_table.setItem(i, 6, QTableWidgetItem(f"{row['delivery']}%"))
+
+        self.tabs.setCurrentIndex(1) # Auto-switch to results tab
+        self.log_message(f"Populated UI with {len(results)} results.")
 
 def main():
     app = QApplication(sys.argv)
