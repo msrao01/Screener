@@ -163,9 +163,9 @@ class DataDownloadWorker(QThread):
             self.finished_signal.emit()
             return
 
-        # Setup date range (e.g., last 30 days)
+        # Setup date range to exactly 365 days to ensure EMA-200 can be calculated
         to_date = datetime.datetime.now().strftime("%Y-%m-%d")
-        from_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        from_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime("%Y-%m-%d")
 
         self.log_signal.emit(f"Fetching historical EOD data from {from_date} to {to_date}")
 

@@ -11,6 +11,7 @@ from dotenv import set_key
 from PySide6.QtCore import Qt, QThread, Signal
 from src.services.data_service import DataDownloadWorker
 from src.models.scanner import ScannerEngine
+from src.db.database import get_connection
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,6 +116,34 @@ class MainWindow(QMainWindow):
         # Right Panel (Tabs)
         self.tabs = QTabWidget()
 
+        # All Stocks Tab
+        self.all_stocks_tab = QWidget()
+        self.all_stocks_layout = QVBoxLayout(self.all_stocks_tab)
+        self.all_stocks_table = QTableWidget()
+        self.all_stocks_table.setColumnCount(2)
+        self.all_stocks_table.setHorizontalHeaderLabels(["Symbol", "Company Name"])
+        self.all_stocks_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.all_stocks_table.setAlternatingRowColors(True)
+        self.all_stocks_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.all_stocks_table.setShowGrid(False)
+        self.all_stocks_layout.addWidget(self.all_stocks_table)
+        self.tabs.addTab(self.all_stocks_tab, "All NSE Stocks")
+
+        # Scanner Results Tab
+        self.results_tab = QWidget()
+        self.results_layout = QVBoxLayout(self.results_tab)
+        self.results_table = QTableWidget()
+        self.results_table.setColumnCount(7)
+        self.results_table.setHorizontalHeaderLabels([
+            "Symbol", "Close", "Matched Scanner", "Score", "Grade", "RVOL", "Delivery %"
+        ])
+        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.results_table.setShowGrid(False)
+        self.results_layout.addWidget(self.results_table)
+        self.tabs.addTab(self.results_tab, "Scanner Results")
+
         # Log Tab
         self.log_tab = QWidget()
         self.log_layout = QVBoxLayout(self.log_tab)
@@ -124,23 +153,10 @@ class MainWindow(QMainWindow):
         self.log_layout.addWidget(self.log_area)
         self.tabs.addTab(self.log_tab, "Execution Logs")
 
-        # Results Tab
-        self.results_tab = QWidget()
-        self.results_layout = QVBoxLayout(self.results_tab)
-        self.results_table = QTableWidget()
-        self.results_table.setColumnCount(7)
-        self.results_table.setHorizontalHeaderLabels([
-            "Symbol", "Close", "Matched Scanner", "Score", "Grade", "RVOL", "Delivery %"
-        ])
-        self.results_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.results_table.setStyleSheet("""
-            QTableWidget { background-color: #1e1e1e; color: #ecf0f1; gridline-color: #34495e; }
-            QHeaderView::section { background-color: #2c3e50; color: white; font-weight: bold; border: 1px solid #34495e; }
-        """)
-        self.results_layout.addWidget(self.results_table)
-        self.tabs.addTab(self.results_tab, "Scanner Results")
-
         self.main_layout.addWidget(self.tabs)
+
+        # Populate All Stocks tab initially
+        self.load_all_stocks()
 
         self.download_worker = None
         self.scan_worker = None
@@ -150,34 +166,98 @@ class MainWindow(QMainWindow):
         self.log_message("2. Run Scanner to analyze the market.")
 
     def apply_dark_theme(self):
-        """Applies a global dark theme to the application."""
+        """Applies a global professional dark theme to the application, resembling a trading terminal."""
         self.setStyleSheet("""
-            QMainWindow { background-color: #2c3e50; }
-            QWidget { color: #ecf0f1; font-family: 'Segoe UI', Arial, sans-serif; }
+            QMainWindow { background-color: #121212; }
+            QWidget { color: #e0e0e0; font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; }
+
             QGroupBox {
-                border: 1px solid #34495e;
-                border-radius: 6px;
-                margin-top: 15px;
+                border: 1px solid #333333;
+                border-radius: 8px;
+                margin-top: 20px;
+                background-color: #1a1a1a;
                 font-weight: bold;
+                padding-top: 15px;
             }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px 0 3px; }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 15px;
+                padding: 0 5px;
+                color: #bbbbbb;
+            }
+
             QLineEdit, QComboBox {
-                background-color: #34495e;
-                border: 1px solid #2c3e50;
-                border-radius: 3px;
-                padding: 5px;
-                color: #ecf0f1;
+                background-color: #2a2a2a;
+                border: 1px solid #444444;
+                border-radius: 4px;
+                padding: 6px;
+                color: #ffffff;
+                selection-background-color: #3498db;
             }
-            QLineEdit:focus, QComboBox:focus { border: 1px solid #3498db; }
+            QLineEdit:focus, QComboBox:focus { border: 1px solid #3498db; background-color: #222222; }
+
             QPushButton {
                 background-color: #2980b9;
                 color: white;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 8px 15px;
                 font-weight: bold;
+                border: none;
             }
             QPushButton:hover { background-color: #3498db; }
-            QPushButton:pressed { background-color: #2471a3; }
+            QPushButton:pressed { background-color: #1f618d; }
+
+            QTabWidget::pane {
+                border: 1px solid #333333;
+                background-color: #1a1a1a;
+                border-radius: 4px;
+            }
+            QTabBar::tab {
+                background-color: #2a2a2a;
+                color: #888888;
+                padding: 8px 16px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background-color: #1a1a1a;
+                color: #ffffff;
+                border-bottom: 2px solid #3498db;
+                font-weight: bold;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #333333;
+                color: #dddddd;
+            }
+
+            QTableWidget {
+                background-color: #1a1a1a;
+                alternate-background-color: #222222;
+                color: #e0e0e0;
+                gridline-color: transparent;
+                border: none;
+                selection-background-color: #2c3e50;
+            }
+            QHeaderView::section {
+                background-color: #252525;
+                color: #aaaaaa;
+                font-weight: bold;
+                border: none;
+                border-bottom: 1px solid #444444;
+                padding: 5px;
+                text-align: left;
+            }
+            QTableCornerButton::section { background-color: #252525; border: none; }
+
+            QTextEdit {
+                background-color: #121212;
+                color: #bbbbbb;
+                font-family: 'Consolas', 'Courier New', monospace;
+                border: none;
+                padding: 10px;
+            }
         """)
 
     def on_broker_changed(self, broker_name):
@@ -217,6 +297,23 @@ class MainWindow(QMainWindow):
 
         self.log_message(f"Credentials saved for {broker}.")
 
+    def load_all_stocks(self):
+        """Loads all stocks from the local database into the All Stocks tab."""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT symbol, company_name FROM stocks ORDER BY symbol ASC")
+            stocks = cursor.fetchall()
+            conn.close()
+
+            self.all_stocks_table.setRowCount(0)
+            for i, row in enumerate(stocks):
+                self.all_stocks_table.insertRow(i)
+                self.all_stocks_table.setItem(i, 0, QTableWidgetItem(row['symbol']))
+                self.all_stocks_table.setItem(i, 1, QTableWidgetItem(row['company_name']))
+        except Exception as e:
+            self.log_message(f"Could not load all stocks: {str(e)}")
+
     def log_message(self, message):
         """Appends a message to the status area."""
         self.log_area.append(message)
@@ -227,7 +324,7 @@ class MainWindow(QMainWindow):
             self.log_message("A download process is already running.")
             return
 
-        self.tabs.setCurrentIndex(0) # Switch to logs tab
+        self.tabs.setCurrentIndex(2) # Switch to logs tab
         self.download_button.setEnabled(False)
         self.scan_button.setEnabled(False)
         self.log_area.clear()
@@ -241,13 +338,15 @@ class MainWindow(QMainWindow):
     def on_download_finished(self):
         self.download_button.setEnabled(True)
         self.scan_button.setEnabled(True)
+        # Refresh the all stocks tab in case the universe was updated
+        self.load_all_stocks()
 
     def start_scan(self):
         if self.scan_worker and self.scan_worker.isRunning():
             self.log_message("A scan is already running.")
             return
 
-        self.tabs.setCurrentIndex(0) # Show logs during scan prep
+        self.tabs.setCurrentIndex(2) # Show logs during scan prep
         self.scan_button.setEnabled(False)
         self.download_button.setEnabled(False)
 
