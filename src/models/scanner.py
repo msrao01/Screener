@@ -128,7 +128,7 @@ class ScannerEngine:
         results = []
 
         for stock in stocks:
-            df = self.indicator_engine.get_stock_data(stock['id'], limit=100)
+            df = self.indicator_engine.get_stock_data(stock['id'], limit=250)
             if df.empty or len(df) < 25:
                 continue # Not enough data
 

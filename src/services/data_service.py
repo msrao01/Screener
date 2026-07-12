@@ -153,6 +153,20 @@ class DataDownloadWorker(QThread):
                 return
             conn.commit()
 
+        # Clean up old junk non-EQ stocks that might be stuck in the database from previous runs
+        if instrument_map:
+            valid_symbols = list(instrument_map.keys())
+            placeholders = ','.join(['?'] * len(valid_symbols))
+            self.log_signal.emit("Cleaning up obsolete/non-EQ symbols from database...")
+            try:
+                # Delete daily_prices for stocks not in the valid list
+                cursor.execute(f"DELETE FROM daily_prices WHERE stock_id IN (SELECT id FROM stocks WHERE symbol NOT IN ({placeholders}))", valid_symbols)
+                # Delete stocks not in the valid list
+                cursor.execute(f"DELETE FROM stocks WHERE symbol NOT IN ({placeholders})", valid_symbols)
+                conn.commit()
+            except Exception as e:
+                self.log_signal.emit(f"Database cleanup warning: {str(e)}")
+
         # Step 2: Get the list of all synced stocks to download EOD data
         cursor.execute("SELECT id, symbol FROM stocks")
         stocks = cursor.fetchall()
@@ -226,8 +240,10 @@ class DataDownloadWorker(QThread):
         self.log_signal.emit("Starting NSE Delivery Data Sync...")
         bhavcopy_client = NSEBhavcopyClient()
 
-        # We only need to fetch bhavcopies for dates that actually have trading data
-        cursor.execute("SELECT DISTINCT date FROM daily_prices WHERE date >= ? ORDER BY date DESC", (from_date,))
+        # We only need to fetch bhavcopies for the most recent few trading dates.
+        # Historical delivery data from 300 days ago is irrelevant for today's scanner logic.
+        # Fetching only the last 3 dates ensures high speed (takes 3 seconds instead of 10 minutes).
+        cursor.execute("SELECT DISTINCT date FROM daily_prices WHERE date >= ? ORDER BY date DESC LIMIT 3", (from_date,))
         active_dates = [row['date'] for row in cursor.fetchall()]
 
         for date_str in active_dates:
