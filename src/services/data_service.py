@@ -28,28 +28,62 @@ class DataDownloadWorker(QThread):
             self.client = KiteAPIClient()
         self.is_running = True
 
+    def get_official_nse_eq_symbols(self):
+        """Downloads the official EQUITY_L.csv from NSE to get the true list of EQ series stocks."""
+        self.log_signal.emit("Downloading official NSE Equity list from nsearchives...")
+        url = 'https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv'
+        valid_symbols = set()
+
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req) as response:
+                content = response.read().decode('utf-8')
+
+            reader = csv.reader(io.StringIO(content))
+            header = next(reader) # Skip header
+
+            for row in reader:
+                # Column 0 is SYMBOL, Column 2 is SERIES (with leading/trailing spaces)
+                if len(row) > 2 and row[2].strip() == 'EQ':
+                    valid_symbols.add(row[0].strip())
+
+            self.log_signal.emit(f"Successfully identified {len(valid_symbols)} official NSE EQ stocks.")
+            return valid_symbols
+
+        except Exception as e:
+            self.log_signal.emit(f"ERROR downloading official NSE list: {str(e)}")
+            return None
+
     def sync_universe_kite(self, cursor):
         """Syncs all NSE Equity symbols using Kite API."""
-        self.log_signal.emit("Fetching full NSE Equity instrument list from Kite...")
+        valid_nse_symbols = self.get_official_nse_eq_symbols()
+        if not valid_nse_symbols:
+            return {}
+
+        self.log_signal.emit("Fetching full NSE instrument list from Kite...")
         all_instruments = self.client.kite.instruments("NSE")
 
         instrument_map = {}
         db_insert = []
 
         for instr in all_instruments:
-            # We only want regular equities (EQ) for scanning
-            if instr['segment'] == 'NSE' and instr['instrument_type'] == 'EQ':
-                symbol = instr['tradingsymbol']
+            symbol = instr['tradingsymbol']
+            # Cross-reference with the official NSE EQ list
+            if instr['segment'] == 'NSE' and symbol in valid_nse_symbols:
                 name = instr.get('name', '')
                 instrument_map[symbol] = instr['instrument_token']
                 db_insert.append((symbol, name))
 
-        self.log_signal.emit(f"Found {len(db_insert)} NSE Equities. Syncing to database...")
+        self.log_signal.emit(f"Mapped {len(db_insert)} Kite instruments. Syncing to database...")
         cursor.executemany('INSERT OR IGNORE INTO stocks (symbol, company_name) VALUES (?, ?)', db_insert)
         return instrument_map
 
     def sync_universe_upstox(self, cursor):
         """Syncs all NSE Equity symbols using Upstox Master Contract CSV."""
+        valid_nse_symbols = self.get_official_nse_eq_symbols()
+        if not valid_nse_symbols:
+            return {}
+
         self.log_signal.emit("Downloading Upstox NSE Master Contract CSV...")
         url = 'https://assets.upstox.com/market-quote/instruments/exchange/NSE.csv.gz'
 
@@ -66,19 +100,16 @@ class DataDownloadWorker(QThread):
             db_insert = []
 
             for row in reader:
-                # Filter for Equities. Upstox CSV format varies, but usually 'instrument_type' is EQ or similar
-                # Upstox keys are in 'instrument_key', symbol is in 'tradingsymbol', name in 'name'
-                # Ensure it's not a futures/options contract
                 symbol = row.get('tradingsymbol')
                 instr_key = row.get('instrument_key')
                 name = row.get('name', '')
-                instr_type = row.get('instrument_type', '')
 
-                if symbol and instr_key and instr_type == 'EQUITY':
+                # Cross-reference with the official NSE EQ list
+                if symbol and instr_key and (symbol in valid_nse_symbols):
                     instrument_map[symbol] = instr_key
                     db_insert.append((symbol, name))
 
-            self.log_signal.emit(f"Found {len(db_insert)} NSE Equities. Syncing to database...")
+            self.log_signal.emit(f"Mapped {len(db_insert)} Upstox instruments. Syncing to database...")
             cursor.executemany('INSERT OR IGNORE INTO stocks (symbol, company_name) VALUES (?, ?)', db_insert)
             return instrument_map
 
