@@ -168,6 +168,10 @@ class DataDownloadWorker(QThread):
 
         self.log_signal.emit(f"Fetching historical EOD data from {from_date} to {to_date}")
 
+        processed_count = 0
+        skipped_count = 0
+        total_records_inserted = 0
+
         for stock in stocks:
             if not self.is_running:
                 self.log_signal.emit("Download cancelled by user.")
@@ -178,10 +182,13 @@ class DataDownloadWorker(QThread):
 
             instrument_token = instrument_map.get(symbol)
             if not instrument_token:
-                self.log_signal.emit(f"Skipping {symbol}: Instrument token not found.")
+                # We skip silently here to avoid spamming the log with expected BE/BZ series omissions
+                skipped_count += 1
                 continue
 
-            self.log_signal.emit(f"Downloading EOD data for {symbol}...")
+            processed_count += 1
+            if processed_count % 100 == 0:
+                self.log_signal.emit(f"Progress: Downloaded EOD data for {processed_count} valid stocks...")
 
             records = self.client.get_historical_data(instrument_token, from_date, to_date, "day")
 
@@ -205,14 +212,15 @@ class DataDownloadWorker(QThread):
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     ''', insert_data)
                     conn.commit()
-                    self.log_signal.emit(f"Saved {len(records)} records for {symbol}.")
+                    total_records_inserted += len(records)
                 except Exception as e:
                      self.log_signal.emit(f"Database error for {symbol}: {str(e)}")
-            else:
-                 self.log_signal.emit(f"No data received for {symbol}.")
 
         conn.close()
-        self.log_signal.emit("EOD Data Download Process Finished.")
+        self.log_signal.emit(f"--- Download Complete ---")
+        self.log_signal.emit(f"Total valid stocks processed: {processed_count}")
+        self.log_signal.emit(f"Total non-EQ instruments skipped: {skipped_count}")
+        self.log_signal.emit(f"Total daily records saved: {total_records_inserted}")
         self.finished_signal.emit()
 
     def stop(self):
