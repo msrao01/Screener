@@ -47,6 +47,9 @@ class ScannerEngine:
         # 4. Delivery Strength (15 points)
         # Using 60% as exceptional delivery threshold based on SRS
         delivery_pct = latest.get('delivery_percent', 0.0)
+        if pd.isna(delivery_pct) or delivery_pct is None:
+            delivery_pct = 0.0
+
         if delivery_pct > 60.0:
             score += 15
         elif delivery_pct > 45.0:
@@ -79,10 +82,15 @@ class ScannerEngine:
         Criteria: EMA20 > EMA50, Price > EMA20, RVOL > 2x, High Delivery (>60%), Strong Close.
         """
         latest = df.iloc[-1]
+
+        delivery_pct = latest.get('delivery_percent', 0.0)
+        if pd.isna(delivery_pct) or delivery_pct is None:
+            delivery_pct = 0.0
+
         if (latest['EMA_20'] > latest['EMA_50'] and
             latest['close'] > latest['EMA_20'] and
             latest['RVOL'] > 2.0 and
-            latest.get('delivery_percent', 0.0) > 60.0 and
+            delivery_pct > 60.0 and
             latest['close'] > latest['open']):
             return True
         return False
@@ -149,6 +157,10 @@ class ScannerEngine:
             grade = self.determine_grade(score)
 
             if scanners_matched or grade != "Discard":
+                delivery_val = df.iloc[-1].get('delivery_percent', 0.0)
+                if pd.isna(delivery_val) or delivery_val is None:
+                    delivery_val = 0.0
+
                 results.append({
                     "symbol": stock['symbol'],
                     "scanners": ", ".join(scanners_matched) if scanners_matched else "None",
@@ -156,7 +168,7 @@ class ScannerEngine:
                     "grade": grade,
                     "close_price": round(df.iloc[-1]['close'], 2),
                     "rvol": round(df.iloc[-1]['RVOL'], 2),
-                    "delivery": round(df.iloc[-1].get('delivery_percent', 0.0), 2)
+                    "delivery": round(delivery_val, 2)
                 })
 
         # Sort by score descending

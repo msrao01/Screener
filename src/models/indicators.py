@@ -28,6 +28,13 @@ class IndicatorEngine:
 
         df['date'] = pd.to_datetime(df['date'])
         df.set_index('date', inplace=True)
+
+        # Fill any missing delivery data with 0.0 to prevent math errors
+        if 'delivery_percent' in df.columns:
+            df['delivery_percent'] = df['delivery_percent'].fillna(0.0)
+        if 'delivery_volume' in df.columns:
+            df['delivery_volume'] = df['delivery_volume'].fillna(0)
+
         return df
 
     def calculate_indicators(self, df):
