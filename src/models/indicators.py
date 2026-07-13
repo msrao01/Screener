@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import logging
 from src.db.database import get_connection
 
@@ -15,11 +16,12 @@ class IndicatorEngine:
 
     def get_stock_data(self, stock_id, limit=250):
         """Fetches historical price data for a specific stock into a Pandas DataFrame."""
+        # We fetch the most recent data (DESC) and then reverse it so pandas processes chronological order (ASC)
         query = '''
             SELECT date, open, high, low, close, volume, delivery_percent, delivery_volume
             FROM daily_prices
             WHERE stock_id = ?
-            ORDER BY date ASC
+            ORDER BY date DESC
             LIMIT ?
         '''
         df = pd.read_sql_query(query, self.conn, params=(stock_id, limit))
@@ -27,6 +29,7 @@ class IndicatorEngine:
             return df
 
         df['date'] = pd.to_datetime(df['date'])
+        df.sort_values('date', ascending=True, inplace=True)
         df.set_index('date', inplace=True)
 
         # Fill any missing delivery data with 0.0 to prevent math errors
@@ -87,8 +90,59 @@ class IndicatorEngine:
             if col in df.columns:
                 df[col] = df[col].round(2)
 
-        # Return the tail
-        return company_name, df.tail(limit)
+        # Return the tail and the reasons checklist
+        score, reasons = self.get_reasons(df)
+        setup = self.calculate_trade_setup(df)
+
+        return {
+            'company_name': company_name,
+            'df': df.tail(limit),
+            'full_df': df, # Used for charting
+            'score': score,
+            'reasons': reasons,
+            'setup': setup
+        }
+
+    def get_reasons(self, df):
+        """Helper to compute score and reasons for a specific stock."""
+        from src.models.scanner import ScannerEngine
+        engine = ScannerEngine()
+        return engine.score_stock(df)
+
+    def calculate_trade_setup(self, df):
+        """Calculates Entry, Stop Loss, and Targets based on recent price action/ATR."""
+        latest = df.iloc[-1]
+
+        # Calculate approximate ATR (14) for stop loss
+        high_low = df['high'] - df['low']
+        high_close = (df['high'] - df['close'].shift()).abs()
+        low_close = (df['low'] - df['close'].shift()).abs()
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        atr = true_range.rolling(14).mean().iloc[-1]
+
+        if pd.isna(atr) or atr == 0:
+            atr = latest['close'] * 0.05 # Fallback to 5%
+
+        entry = latest['close']
+
+        # Stop loss: 1.5x ATR below close
+        stop_loss = entry - (atr * 1.5)
+
+        # Calculate Risk and Targets (1:2 and 1:3)
+        risk = entry - stop_loss
+        target_1 = entry + (risk * 2)
+        target_2 = entry + (risk * 3)
+
+        return {
+            'entry': round(entry, 2),
+            'stop_loss': round(stop_loss, 2),
+            'target_1': round(target_1, 2),
+            'target_2': round(target_2, 2),
+            'risk': round(risk, 2),
+            'rr_1': '1:2.0',
+            'rr_2': '1:3.0'
+        }
 
     def close(self):
         self.conn.close()

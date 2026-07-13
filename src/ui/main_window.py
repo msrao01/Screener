@@ -361,76 +361,10 @@ class MainWindow(QMainWindow):
 
         latest = df.iloc[-1]
 
-        # Create Tab Widget
-        details_tab = QWidget()
-        layout = QVBoxLayout(details_tab)
+        # Create Tab using the external StockDetailsWidget
+        from src.ui.stock_details import StockDetailsWidget
 
-        # Header Info
-        header = QLabel(f"{symbol} - {company_name}")
-        header.setStyleSheet("font-size: 24px; font-weight: bold; color: #3498db; margin-top: 10px;")
-        layout.addWidget(header)
-
-        # Metrics Row
-        metrics_layout = QHBoxLayout()
-        metrics = [
-            ("LTP", latest['close']),
-            ("RVOL", f"{latest.get('RVOL', 0)}x"),
-            ("RSI (14)", latest.get('RSI_14', 0)),
-            ("Delivery", f"{latest.get('delivery_percent', 0)}%"),
-            ("EMA 20", latest.get('EMA_20', 0)),
-            ("EMA 50", latest.get('EMA_50', 0)),
-            ("EMA 200", latest.get('EMA_200', 0)),
-        ]
-
-        for name, value in metrics:
-            box = QGroupBox(name)
-            box_layout = QVBoxLayout()
-            val_label = QLabel(str(value))
-            val_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #ecf0f1;")
-            val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            box_layout.addWidget(val_label)
-            box.setLayout(box_layout)
-            metrics_layout.addWidget(box)
-
-        layout.addLayout(metrics_layout)
-
-        # History Table
-        hist_label = QLabel("Last 15 Days History")
-        hist_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 20px;")
-        layout.addWidget(hist_label)
-
-        hist_table = QTableWidget()
-        hist_table.setColumnCount(8)
-        hist_table.setHorizontalHeaderLabels([
-            "Date", "Close", "Volume", "Deliv %", "EMA 20", "EMA 50", "RSI", "RVOL"
-        ])
-        hist_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        hist_table.setAlternatingRowColors(True)
-        hist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        hist_table.setShowGrid(False)
-        hist_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-
-        # Populate history
-        hist_table.setRowCount(len(df))
-        for i, (date, row_data) in enumerate(df.iterrows()):
-            date_str = date.strftime("%Y-%m-%d")
-            hist_table.insertRow(i)
-            hist_table.setItem(i, 0, QTableWidgetItem(date_str))
-            hist_table.setItem(i, 1, QTableWidgetItem(str(row_data['close'])))
-            hist_table.setItem(i, 2, QTableWidgetItem(str(int(row_data['volume']))))
-            hist_table.setItem(i, 3, QTableWidgetItem(f"{row_data.get('delivery_percent', 0)}%"))
-            hist_table.setItem(i, 4, QTableWidgetItem(str(row_data.get('EMA_20', 0))))
-            hist_table.setItem(i, 5, QTableWidgetItem(str(row_data.get('EMA_50', 0))))
-            hist_table.setItem(i, 6, QTableWidgetItem(str(row_data.get('RSI_14', 0))))
-            hist_table.setItem(i, 7, QTableWidgetItem(str(row_data.get('RVOL', 0))))
-
-        layout.addWidget(hist_table)
-
-        # Add Close Tab Button
-        close_btn = QPushButton("Close Details")
-        close_btn.setStyleSheet("background-color: #c0392b; max-width: 150px; margin-top: 10px;")
-        close_btn.clicked.connect(lambda: self.close_detail_tab(symbol, details_tab))
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        details_tab = StockDetailsWidget(symbol, df, lambda: self.close_detail_tab(symbol, details_tab))
 
         # Add to tabs
         index = self.tabs.addTab(details_tab, f"🔍 {symbol}")
