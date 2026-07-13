@@ -63,6 +63,33 @@ class IndicatorEngine:
 
         return df
 
+    def get_stock_historical_summary(self, symbol, limit=15):
+        """Fetches the stock id, retrieves the data, calculates indicators, and returns the last N days."""
+        query = "SELECT id, company_name FROM stocks WHERE symbol = ?"
+        cursor = self.conn.cursor()
+        cursor.execute(query, (symbol,))
+        stock = cursor.fetchone()
+        if not stock:
+            return None, None
+
+        stock_id = stock['id']
+        company_name = stock['company_name']
+
+        df = self.get_stock_data(stock_id, limit=250)
+        if df.empty:
+            return company_name, None
+
+        df = self.calculate_indicators(df)
+
+        # Round the metrics for clean UI display
+        cols_to_round = ['open', 'high', 'low', 'close', 'EMA_20', 'EMA_50', 'EMA_200', 'RVOL', 'RSI_14', 'delivery_percent']
+        for col in cols_to_round:
+            if col in df.columns:
+                df[col] = df[col].round(2)
+
+        # Return the tail
+        return company_name, df.tail(limit)
+
     def close(self):
         self.conn.close()
 

@@ -11,6 +11,7 @@ from dotenv import set_key
 from PySide6.QtCore import Qt, QThread, Signal
 from src.services.data_service import DataDownloadWorker
 from src.models.scanner import ScannerEngine
+from src.models.indicators import IndicatorEngine
 from src.db.database import get_connection
 
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,9 @@ class MainWindow(QMainWindow):
         self.all_stocks_table.setAlternatingRowColors(True)
         self.all_stocks_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.all_stocks_table.setShowGrid(False)
+        self.all_stocks_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.all_stocks_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.all_stocks_table.itemDoubleClicked.connect(self.on_stock_double_clicked)
         self.all_stocks_layout.addWidget(self.all_stocks_table)
         self.tabs.addTab(self.all_stocks_tab, "All NSE Stocks")
 
@@ -141,6 +145,9 @@ class MainWindow(QMainWindow):
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.results_table.setShowGrid(False)
+        self.results_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.results_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.results_table.itemDoubleClicked.connect(self.on_stock_double_clicked)
         self.results_layout.addWidget(self.results_table)
         self.tabs.addTab(self.results_tab, "Scanner Results")
 
@@ -154,6 +161,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.log_tab, "Execution Logs")
 
         self.main_layout.addWidget(self.tabs)
+
+        # Details Tab Memory (to prevent opening 50 tabs of the same stock)
+        self.active_detail_tabs = {}
 
         # Populate All Stocks tab initially
         self.load_all_stocks()
@@ -251,6 +261,20 @@ class MainWindow(QMainWindow):
             }
             QTableCornerButton::section { background-color: #252525; border: none; }
 
+            QScrollBar:vertical {
+                border: none;
+                background-color: #1a1a1a;
+                width: 12px;
+                margin: 0px 0px 0px 0px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #444444;
+                min-height: 20px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover { background-color: #666666; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }
+
             QTextEdit {
                 background-color: #121212;
                 color: #bbbbbb;
@@ -313,6 +337,113 @@ class MainWindow(QMainWindow):
                 self.all_stocks_table.setItem(i, 1, QTableWidgetItem(row['company_name']))
         except Exception as e:
             self.log_message(f"Could not load all stocks: {str(e)}")
+
+    def on_stock_double_clicked(self, item):
+        """Handles double click on any stock table to open a details tab."""
+        row = item.row()
+        table = item.tableWidget()
+        symbol = table.item(row, 0).text()
+        self.open_stock_details(symbol)
+
+    def open_stock_details(self, symbol):
+        """Creates or switches to a Stock Details tab for the given symbol."""
+        if symbol in self.active_detail_tabs:
+            self.tabs.setCurrentWidget(self.active_detail_tabs[symbol])
+            return
+
+        engine = IndicatorEngine()
+        company_name, df = engine.get_stock_historical_summary(symbol)
+        engine.close()
+
+        if df is None or df.empty:
+            self.log_message(f"No historical data available for {symbol}")
+            return
+
+        latest = df.iloc[-1]
+
+        # Create Tab Widget
+        details_tab = QWidget()
+        layout = QVBoxLayout(details_tab)
+
+        # Header Info
+        header = QLabel(f"{symbol} - {company_name}")
+        header.setStyleSheet("font-size: 24px; font-weight: bold; color: #3498db; margin-top: 10px;")
+        layout.addWidget(header)
+
+        # Metrics Row
+        metrics_layout = QHBoxLayout()
+        metrics = [
+            ("LTP", latest['close']),
+            ("RVOL", f"{latest.get('RVOL', 0)}x"),
+            ("RSI (14)", latest.get('RSI_14', 0)),
+            ("Delivery", f"{latest.get('delivery_percent', 0)}%"),
+            ("EMA 20", latest.get('EMA_20', 0)),
+            ("EMA 50", latest.get('EMA_50', 0)),
+            ("EMA 200", latest.get('EMA_200', 0)),
+        ]
+
+        for name, value in metrics:
+            box = QGroupBox(name)
+            box_layout = QVBoxLayout()
+            val_label = QLabel(str(value))
+            val_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #ecf0f1;")
+            val_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            box_layout.addWidget(val_label)
+            box.setLayout(box_layout)
+            metrics_layout.addWidget(box)
+
+        layout.addLayout(metrics_layout)
+
+        # History Table
+        hist_label = QLabel("Last 15 Days History")
+        hist_label.setStyleSheet("font-size: 16px; font-weight: bold; margin-top: 20px;")
+        layout.addWidget(hist_label)
+
+        hist_table = QTableWidget()
+        hist_table.setColumnCount(8)
+        hist_table.setHorizontalHeaderLabels([
+            "Date", "Close", "Volume", "Deliv %", "EMA 20", "EMA 50", "RSI", "RVOL"
+        ])
+        hist_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        hist_table.setAlternatingRowColors(True)
+        hist_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        hist_table.setShowGrid(False)
+        hist_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        # Populate history
+        hist_table.setRowCount(len(df))
+        for i, (date, row_data) in enumerate(df.iterrows()):
+            date_str = date.strftime("%Y-%m-%d")
+            hist_table.insertRow(i)
+            hist_table.setItem(i, 0, QTableWidgetItem(date_str))
+            hist_table.setItem(i, 1, QTableWidgetItem(str(row_data['close'])))
+            hist_table.setItem(i, 2, QTableWidgetItem(str(int(row_data['volume']))))
+            hist_table.setItem(i, 3, QTableWidgetItem(f"{row_data.get('delivery_percent', 0)}%"))
+            hist_table.setItem(i, 4, QTableWidgetItem(str(row_data.get('EMA_20', 0))))
+            hist_table.setItem(i, 5, QTableWidgetItem(str(row_data.get('EMA_50', 0))))
+            hist_table.setItem(i, 6, QTableWidgetItem(str(row_data.get('RSI_14', 0))))
+            hist_table.setItem(i, 7, QTableWidgetItem(str(row_data.get('RVOL', 0))))
+
+        layout.addWidget(hist_table)
+
+        # Add Close Tab Button
+        close_btn = QPushButton("Close Details")
+        close_btn.setStyleSheet("background-color: #c0392b; max-width: 150px; margin-top: 10px;")
+        close_btn.clicked.connect(lambda: self.close_detail_tab(symbol, details_tab))
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
+
+        # Add to tabs
+        index = self.tabs.addTab(details_tab, f"🔍 {symbol}")
+        self.active_detail_tabs[symbol] = details_tab
+        self.tabs.setCurrentIndex(index)
+
+    def close_detail_tab(self, symbol, widget):
+        """Closes a specific detail tab."""
+        index = self.tabs.indexOf(widget)
+        if index != -1:
+            self.tabs.removeTab(index)
+        if symbol in self.active_detail_tabs:
+            del self.active_detail_tabs[symbol]
 
     def log_message(self, message):
         """Appends a message to the status area."""
