@@ -2,8 +2,46 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGroupBox, QTabWidget,
     QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QGridLayout
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QPicture, QPainter, QColor
 import pyqtgraph as pg
+
+class CandlestickItem(pg.GraphicsObject):
+    def __init__(self, data):
+        pg.GraphicsObject.__init__(self)
+        self.data = data  # data must be a list of tuples (t, open, close, min, max)
+        self.generatePicture()
+
+    def generatePicture(self):
+        self.picture = QPicture()
+        p = QPainter(self.picture)
+
+        w = (self.data[1][0] - self.data[0][0]) / 3. if len(self.data) > 1 else 86400 * 0.3
+
+        for (t, open, close, min, max) in self.data:
+            is_bullish = close >= open
+            color = QColor('#2ecc71') if is_bullish else QColor('#e74c3c')
+
+            p.setPen(pg.mkPen(color))
+            p.setBrush(pg.mkBrush(color))
+
+            # Draw wick
+            p.drawLine(pg.Point(t, min), pg.Point(t, max))
+
+            # Draw body
+            if open == close:
+                p.drawLine(pg.Point(t - w, open), pg.Point(t + w, close))
+            else:
+                p.drawRect(QRectF(t - w, open, w * 2, close - open))
+
+        p.end()
+
+    def paint(self, p, *args):
+        p.drawPicture(0, 0, self.picture)
+
+    def boundingRect(self):
+        return QRectF(self.picture.boundingRect())
+
 
 class StockDetailsWidget(QWidget):
     """
@@ -152,25 +190,19 @@ class StockDetailsWidget(QWidget):
         # Prepare x-axis timestamps (pyqtgraph uses float timestamps)
         x_timestamps = [dt.timestamp() for dt in df.index]
 
-        # 1. Candlesticks (using simple lines/rects for performance, or standard pyqtgraph patterns)
-        # To keep it lightweight and native, we draw green/red boxes
+        # 1. Candlesticks (True scalable graphics object)
+        candle_data = []
         for i, (date, row) in enumerate(df.iterrows()):
             t = x_timestamps[i]
+            candle_data.append((t, row['open'], row['close'], row['low'], row['high']))
+
+            # Draw volume bars using simple plot lines (since width matters less for vol)
             is_bullish = row['close'] >= row['open']
-            color = pg.mkColor('#2ecc71') if is_bullish else pg.mkColor('#e74c3c')
+            v_color = pg.mkColor('#2ecc71') if is_bullish else pg.mkColor('#e74c3c')
+            p2.plot([t, t], [0, row['volume']], pen=pg.mkPen(v_color, width=4))
 
-            # Wicks
-            p1.plot([t, t], [row['low'], row['high']], pen=pg.mkPen(color, width=1.5))
-
-            # Bodies (approximate width for a day = 86400 seconds * 0.8)
-            box_width = 86400 * 0.7
-            if is_bullish:
-                p1.plot([t, t], [row['open'], row['close']], pen=pg.mkPen(color, width=6))
-            else:
-                p1.plot([t, t], [row['close'], row['open']], pen=pg.mkPen(color, width=6))
-
-            # Volume bar
-            p2.plot([t, t], [0, row['volume']], pen=pg.mkPen(color, width=4))
+        item = CandlestickItem(candle_data)
+        p1.addItem(item)
 
         # 2. EMAs
         if 'EMA_20' in df.columns:

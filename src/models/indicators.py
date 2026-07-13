@@ -90,24 +90,15 @@ class IndicatorEngine:
             if col in df.columns:
                 df[col] = df[col].round(2)
 
-        # Return the tail and the reasons checklist
-        score, reasons = self.get_reasons(df)
+        # Calculate trade setup
         setup = self.calculate_trade_setup(df)
 
         return {
             'company_name': company_name,
             'df': df.tail(limit),
             'full_df': df, # Used for charting
-            'score': score,
-            'reasons': reasons,
             'setup': setup
         }
-
-    def get_reasons(self, df):
-        """Helper to compute score and reasons for a specific stock."""
-        from src.models.scanner import ScannerEngine
-        engine = ScannerEngine()
-        return engine.score_stock(df)
 
     def calculate_trade_setup(self, df):
         """Calculates Entry, Stop Loss, and Targets based on recent price action/ATR."""

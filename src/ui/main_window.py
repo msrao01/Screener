@@ -114,7 +114,28 @@ class MainWindow(QMainWindow):
 
         self.main_layout.addWidget(self.left_panel)
 
-        # Right Panel (Tabs)
+        # Right Panel (Tabs & Search)
+        self.right_panel = QWidget()
+        self.right_layout = QVBoxLayout(self.right_panel)
+
+        # Search Bar
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search by Symbol or Company Name...")
+        self.search_input.textChanged.connect(self.filter_tables)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 15px;
+                padding: 8px 15px;
+                font-size: 14px;
+                color: #fff;
+                margin-bottom: 10px;
+            }
+            QLineEdit:focus { border: 1px solid #3498db; }
+        """)
+        self.right_layout.addWidget(self.search_input)
+
         self.tabs = QTabWidget()
 
         # All Stocks Tab
@@ -160,7 +181,8 @@ class MainWindow(QMainWindow):
         self.log_layout.addWidget(self.log_area)
         self.tabs.addTab(self.log_tab, "Execution Logs")
 
-        self.main_layout.addWidget(self.tabs)
+        self.right_layout.addWidget(self.tabs)
+        self.main_layout.addWidget(self.right_panel)
 
         # Details Tab Memory (to prevent opening 50 tabs of the same stock)
         self.active_detail_tabs = {}
@@ -338,6 +360,27 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.log_message(f"Could not load all stocks: {str(e)}")
 
+    def filter_tables(self, text):
+        """Filters rows in both the All Stocks and Results tables based on search input."""
+        search_term = text.lower()
+
+        # Filter All Stocks
+        for row in range(self.all_stocks_table.rowCount()):
+            symbol = self.all_stocks_table.item(row, 0).text().lower()
+            name = self.all_stocks_table.item(row, 1).text().lower()
+            if search_term in symbol or search_term in name:
+                self.all_stocks_table.setRowHidden(row, False)
+            else:
+                self.all_stocks_table.setRowHidden(row, True)
+
+        # Filter Scanner Results
+        for row in range(self.results_table.rowCount()):
+            symbol = self.results_table.item(row, 0).text().lower()
+            if search_term in symbol:
+                self.results_table.setRowHidden(row, False)
+            else:
+                self.results_table.setRowHidden(row, True)
+
     def on_stock_double_clicked(self, item):
         """Handles double click on any stock table to open a details tab."""
         row = item.row()
@@ -352,19 +395,24 @@ class MainWindow(QMainWindow):
             return
 
         engine = IndicatorEngine()
-        company_name, df = engine.get_stock_historical_summary(symbol)
+        data_dict = engine.get_stock_historical_summary(symbol)
         engine.close()
 
-        if df is None or df.empty:
+        if not data_dict or data_dict['df'] is None or data_dict['df'].empty:
             self.log_message(f"No historical data available for {symbol}")
             return
 
-        latest = df.iloc[-1]
+        # Calculate Score and Reasons cleanly using ScannerEngine
+        scanner = ScannerEngine()
+        score, reasons = scanner.score_stock(data_dict['full_df'])
+
+        data_dict['score'] = score
+        data_dict['reasons'] = reasons
 
         # Create Tab using the external StockDetailsWidget
         from src.ui.stock_details import StockDetailsWidget
 
-        details_tab = StockDetailsWidget(symbol, df, lambda: self.close_detail_tab(symbol, details_tab))
+        details_tab = StockDetailsWidget(symbol, data_dict, lambda: self.close_detail_tab(symbol, details_tab))
 
         # Add to tabs
         index = self.tabs.addTab(details_tab, f"🔍 {symbol}")

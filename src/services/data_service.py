@@ -223,8 +223,14 @@ class DataDownloadWorker(QThread):
 
                 try:
                     cursor.executemany('''
-                        INSERT OR IGNORE INTO daily_prices (stock_id, date, open, high, low, close, volume)
+                        INSERT INTO daily_prices (stock_id, date, open, high, low, close, volume)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(stock_id, date) DO UPDATE SET
+                            open=excluded.open,
+                            high=excluded.high,
+                            low=excluded.low,
+                            close=excluded.close,
+                            volume=excluded.volume
                     ''', insert_data)
                     conn.commit()
                     total_records_inserted += len(records)
